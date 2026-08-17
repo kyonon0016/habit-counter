@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>サクッと習慣カウンター+</title>
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#2563eb">
+  <style>
+    :root {
+      --bg: #f8fafc;
+      --card-bg: #ffffff;
+      --text: #0f172a;
+      --text-muted: #64748b;
+      --primary: #2563eb;
+      --primary-light: #dbeafe;
+      --danger: #ef4444;
+      --border: #e2e8f0;
+      --radius: 12px;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body { background: var(--bg); color: var(--text); padding: 20px 12px; max-width: 600px; margin: 0 auto; }
+    header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+    h1 { font-size: 1.25rem; font-weight: 700; color: #1e293b; }
+    .btn-icon { background: none; border: 1px solid var(--border); padding: 8px 12px; border-radius: 8px; font-size: 0.85rem; cursor: pointer; background: var(--card-bg); }
+    
+    /* 登録フォーム */
+    .card-form { background: var(--card-bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin-bottom: 20px; display: flex; gap: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+    .card-form input { flex: 1; border: 1px solid var(--border); padding: 10px 14px; border-radius: 8px; font-size: 0.95rem; outline: none; }
+    .card-form button { background: var(--primary); color: #fff; border: none; padding: 10px 16px; border-radius: 8px; font-weight: 600; cursor: pointer; }
+
+    /* 習慣リスト */
+    .habit-list { display: flex; flex-direction: column; gap: 12px; }
+    .habit-card { background: var(--card-bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+    .habit-info { flex: 1; }
+    .habit-title { font-size: 1.05rem; font-weight: 600; margin-bottom: 4px; }
+    .habit-sub { font-size: 0.8rem; color: var(--text-muted); }
+    
+    /* カウントボタン・アンドゥ */
+    .counter-actions { display: flex; align-items: center; gap: 10px; }
+    .btn-count { background: var(--primary-light); color: var(--primary); border: 2px solid var(--primary); font-size: 1.2rem; font-weight: 700; min-width: 64px; height: 50px; border-radius: 10px; cursor: pointer; transition: transform 0.05s ease, background 0.2s; user-select: none; }
+    .btn-count:active { transform: scale(0.95); background: var(--primary); color: #fff; }
+    .btn-del { color: var(--danger); background: none; border: none; cursor: pointer; font-size: 0.8rem; padding: 4px 6px; }
+
+    /* 履歴モーダル */
+    .modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); justify-content: center; align-items: center; padding: 16px; z-index: 100; }
+    .modal-content { background: #fff; border-radius: var(--radius); padding: 20px; width: 100%; max-width: 480px; max-height: 80vh; overflow-y: auto; }
+    .history-item { font-size: 0.85rem; padding: 8px 0; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; }
+    .history-item:last-child { border-bottom: none; }
+  </style>
+</head>
+<body>
+
+  <header>
+    <h1>⚡ サクッと習慣カウンター+</h1>
+    <button class="btn-icon" id="notif-btn">🔔 通知を有効化</button>
+  </header>
+
+  <!-- 1. 登録 -->
+  <form class="card-form" id="habit-form">
+    <input type="text" id="habit-input" placeholder="例: 腕立て伏せ、読書、水分補給" required>
+    <button type="submit">登録</button>
+  </form>
+
+  <!-- 2. カウント表示 -->
+  <div class="habit-list" id="habit-list"></div>
+
+  <!-- 3. 履歴閲覧モーダル -->
+  <div class="modal" id="history-modal">
+    <div class="modal-content">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+        <h2 style="font-size:1.1rem;" id="modal-title">記録履歴</h2>
+        <button class="btn-icon" id="modal-close">閉じる</button>
+      </div>
+      <div id="history-content"></div>
+    </div>
+  </div>
+
+  <script>
+    // --- データ構造 & 初期化 ---
+    const STORAGE_KEY = 'quick_habit_data_v1';
+    let habits = JSON.parse(localStorage.getItem(STORAGE_KEY)) || [];
+
+    const save = () => localStorage.setItem(STORAGE_KEY, JSON.stringify(habits));
+
+    // --- 1. 登録機能 ---
+    document.getElementById('habit-form').addEventListener('submit', (e) => {
+      e.preventDefault();
+      const input = document.getElementById('habit-input');
+      const title = input.value.trim();
+      if (!title) return;
+
+      habits.push({
+        id: Date.now().toString(),
+        title: title,
+        count: 0,
+        logs: [] // timestamp配列
+      });
+      save();
+      input.value = '';
+      render();
+    });
+
+    // --- 2. カウント機能（タップで+1、長押し/右クリックで-1） ---
+    function increment(id) {
+      const h = habits.find(x => x.id === id);
+      if (!h) return;
+      h.count += 1;
+      h.logs.push(new Date().toISOString());
+      save();
+      render();
+      scheduleNotification(h.title);
+    }
+
+    function decrement(id) {
+      const h = habits.find(x => x.id === id);
+      if (!h || h.count <= 0) return;
+      if (confirm(`「${h.title}」のカウントを1つ減らしますか？`)) {
+        h.count -= 1;
+        h.logs.pop();
+        save();
+        render();
+      }
+    }
+
+    function deleteHabit(id) {
+      if (confirm('この項目を削除しますか？')) {
+        habits = habits.filter(x => x.id !== id);
+        save();
+        render();
+      }
+    }
+
+    // --- 3. 履歴閲覧機能 ---
+    function openHistory(id) {
+      const h = habits.find(x => x.id === id);
+      if (!h) return;
+      document.getElementById('modal-title').textContent = `${h.title} の履歴 (合計: ${h.count}回)`;
+      const list = document.getElementById('history-content');
+      if (h.logs.length === 0) {
+        list.innerHTML = '<div style="color:#64748b; font-size:0.9rem;">まだ記録がありません</div>';
+      } else {
+        list.innerHTML = h.logs.slice().reverse().map(ts => {
+          const d = new Date(ts);
+          return `<div class="history-item">
+            <span>${d.toLocaleDateString()} ${d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</span>
+            <span style="color:#2563eb; font-weight:600;">+1 完了</span>
+          </div>`;
+        }).join('');
+      }
+      document.getElementById('history-modal').style.display = 'flex';
+    }
+
+    document.getElementById('modal-close').addEventListener('click', () => {
+      document.getElementById('history-modal').style.display = 'none';
+    });
+
+    // --- 4. 通知機能（Web Notification） ---
+    const notifBtn = document.getElementById('notif-btn');
+    notifBtn.addEventListener('click', async () => {
+      if (!('Notification' in window)) {
+        alert('このブラウザは通知に対応していません。');
+        return;
+      }
+      const permission = await Notification.requestPermission();
+      if (permission === 'granted') {
+        notifBtn.textContent = '🔔 通知: ON';
+        new Notification('サクッと習慣カウンター', { body: '通知が有効になりました！継続をサポートします。' });
+      }
+    });
+
+    function scheduleNotification(title) {
+      if (Notification.permission === 'granted') {
+        // 例: 最後のタップから24時間後にリマインド（デモ用にバックグラウンド管理へ通知予約）
+        navigator.serviceWorker.ready.then(reg => {
+          reg.showNotification('ナイス達成！', {
+            body: `「${title}」を記録しました。明日もこの調子で続けましょう！`,
+            icon: 'icon.png'
+          });
+        });
+      }
+    }
+
+    // --- 描画ロジック ---
+    function render() {
+      const container = document.getElementById('habit-list');
+      if (habits.length === 0) {
+        container.innerHTML = '<p style="text-align:center; color:#94a3b8; padding:30px 0;">上のフォームから習慣やタスクを登録してください</p>';
+        return;
+      }
+      container.innerHTML = habits.map(h => `
+        <div class="habit-card">
+          <div class="habit-info" onclick="openHistory('${h.id}')" style="cursor:pointer;">
+            <div class="habit-title">${h.title} 📊</div>
+            <div class="habit-sub">タップで履歴・統計を表示</div>
+          </div>
+          <div class="counter-actions">
+            <button class="btn-del" onclick="deleteHabit('${h.id}')">削除</button>
+            <button class="btn-count" onclick="increment('${h.id}')" oncontextmenu="event.preventDefault(); decrement('${h.id}');">
+              +${h.count}
+            </button>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    // PWA Service Worker 登録
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('sw.js');
+    }
+
+    render();
+  </script>
+</body>
+</html>
